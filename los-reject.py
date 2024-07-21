@@ -3,8 +3,6 @@ import argparse
 import numpy as np
 import time
 
-from itertools import combinations
-
 from source.los_func import linedef_visibility
 from source.wad_func import *
 
@@ -56,26 +54,25 @@ def main(raw_args=None):
     # pairwise compare all 2s lines
     tt = time.perf_counter()
     vis_type_count = {}
-    for my_inds in combinations(range(n_portals),2):
-        (vis_bool, vis_type, my_inds) = linedef_visibility(all_2s_lines[my_inds[0]][0],
-                                                           all_2s_lines[my_inds[0]][1],
-                                                           all_2s_lines[my_inds[1]][0],
-                                                           all_2s_lines[my_inds[1]][1],
-                                                           all_solid_lines,
-                                                           line_graph,
-                                                           reject_table,
-                                                           my_inds,
-                                                           PLOTTING,
-                                                           plot_prefix)
-        print(f'{my_inds} {int(time.perf_counter() - tt)} sec')
-        if vis_bool:
-            for si in all_2s_lines[my_inds[0]][1]:
-                for sj in all_2s_lines[my_inds[1]][1]:
-                    reject_table[si,sj] = IS_VISIBLE
-                    reject_table[sj,si] = IS_VISIBLE
-        if vis_type not in vis_type_count:
-            vis_type_count[vis_type] = 0
-        vis_type_count[vis_type] += 1
+    for li in range(n_portals):
+        for lj in range(li+1, n_portals):
+            (vis_bool, vis_type, my_inds) = linedef_visibility(all_2s_lines[li],
+                                                               all_2s_lines[lj],
+                                                               all_solid_lines,
+                                                               line_graph,
+                                                               reject_table,
+                                                               (li, lj),
+                                                               PLOTTING,
+                                                               plot_prefix)
+            if vis_bool:
+                for si in all_2s_lines[li][1]:
+                    for sj in all_2s_lines[lj][1]:
+                        reject_table[si,sj] = IS_VISIBLE
+                        reject_table[sj,si] = IS_VISIBLE
+            if vis_type not in vis_type_count:
+                vis_type_count[vis_type] = 0
+            vis_type_count[vis_type] += 1
+        print(f'{li+1} / {n_portals} ({int(time.perf_counter() - tt)} sec)')
 
     for k in sorted(vis_type_count.keys()):
         print(vis_type_count[k], k)

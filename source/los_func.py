@@ -3,7 +3,7 @@ import numpy as np
 
 from collections import deque
 
-from source.wad_func import IS_VISIBLE
+from source.wad_func import IS_INVISIBLE
 
 EPSILON = 0.1
 
@@ -138,14 +138,16 @@ def line_graph_bfs(graph, starting_node, node_whitelist):
     return sorted(visited.keys())
 
 
-def linedef_visibility(line_i, sectors_i, line_j, sectors_j, all_solid_lines, line_graph, reject_table, my_inds, make_plot, plot_prefix=''):
+def linedef_visibility(linedat_i, linedat_j, all_solid_lines, line_graph, reject_table, my_inds, make_plot, plot_prefix=''):
+    [line_i, sectors_i] = linedat_i
+    [line_j, sectors_j] = linedat_j
     #
     # check if these sectors have already been analyzed and found visible
     #
     already_visible = True
     for si in sectors_i:
         for sj in sectors_j:
-            if reject_table[si,sj] == IS_VISIBLE:
+            if reject_table[si,sj] == IS_INVISIBLE:
                 already_visible = False
     if already_visible:
         return (False, 'already_vis', my_inds)
