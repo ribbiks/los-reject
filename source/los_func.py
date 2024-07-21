@@ -59,6 +59,13 @@ def check_collinearity(l1, l2):
     return True
 
 
+def distance_from_point_to_line_segment(point, line):
+    v = line[1] - line[0]
+    num = abs(v[1]*point[0] - v[0]*point[1] + line[1][0]*line[0][1] - line[1][1]*line[0][0])
+    den = np.sqrt(v[0]*v[0] + v[1]*v[1])
+    return num/den
+
+
 def plot_line(line, kwargs={}, normal_kwargs={}, normal_len_frac=0.1):
     mpl.plot([line[0][0], line[1][0]], [line[0][1], line[1][1]], label='_nolegend_', **kwargs)
     if normal_kwargs:
@@ -279,7 +286,9 @@ def linedef_visibility(linedat_i, linedat_j, all_solid_lines, line_graph, reject
 def linedef_visibility_parallel(all_2s_lines, li, n_portals, all_solid_lines, line_graph, reject_table, plot_prefix):
     reject_out = np.zeros((reject_table.shape[0], reject_table.shape[1]), dtype='bool') + IS_INVISIBLE
     for lj in range(li+1, n_portals):
-        plot_fn = f'{plot_prefix}.{li}.{lj}.png'
+        plot_fn = ''
+        if plot_prefix:
+            plot_fn = f'{plot_prefix}.{li}.{lj}.png'
         (vis_bool, vis_type) = linedef_visibility(all_2s_lines[li],
                                                   all_2s_lines[lj],
                                                   all_solid_lines,

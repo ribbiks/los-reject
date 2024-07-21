@@ -65,7 +65,9 @@ def main(raw_args=None):
     if NUM_PROCESSES <= 1:
         for li in range(n_portals):
             for lj in range(li+1, n_portals):
-                plot_fn = f'{plot_prefix}.{li}.{lj}.png'
+                plot_fn = ''
+                if plot_prefix:
+                    plot_fn = f'{plot_prefix}.{li}.{lj}.png'
                 (vis_bool, vis_type) = linedef_visibility(all_2s_lines[li], all_2s_lines[lj], all_solid_lines, line_graph, reject_table, plot_fn)
                 if vis_bool:
                     for si in all_2s_lines[li][1]:
