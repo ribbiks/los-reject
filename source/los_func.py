@@ -265,11 +265,16 @@ def linedef_visibility(linedat_i, linedat_j, all_solid_lines, line_graph, reject
                 v2 = np.array(point) - edge1[1]
                 if v1[0]*v1[0] + v1[1]*v1[1] > EPSILON and v2[0]*v2[0] + v2[1]*v2[1] > EPSILON:
                     points[point] = True
-        points = {point:distance_from_point_to_line_segment(point, edge2)
-                  for point in points.keys() if all(lines_sees_points(enclosing_lines, [np.array(point)]))}
-        points = [(points[k], k) for k in points.keys() if points[k] > EPSILON]
-        if points:
-            closest_point = min(points)
+        points_of_interest = {}
+        for point in points.keys():
+            if all(lines_sees_points(enclosing_lines, [np.array(point)])):
+                d_to_my_edge = distance_from_point_to_line_segment(point, edge1)
+                d_to_other_edge = distance_from_point_to_line_segment(point, edge2)
+                if d_to_other_edge > EPSILON:
+                    points_of_interest[point] = d_to_other_edge/(d_to_my_edge + d_to_other_edge)
+        points_of_interest = [(v,k) for k,v in points_of_interest.items()]
+        if points_of_interest:
+            closest_point = min(points_of_interest)
             spanning_lines[0].append([edge1[0], np.array(closest_point[1])])
             spanning_lines[0].append([edge1[1], np.array(closest_point[1])])
     #
@@ -281,11 +286,16 @@ def linedef_visibility(linedat_i, linedat_j, all_solid_lines, line_graph, reject
                 v2 = np.array(point) - edge2[1]
                 if v1[0]*v1[0] + v1[1]*v1[1] > EPSILON and v2[0]*v2[0] + v2[1]*v2[1] > EPSILON:
                     points[point] = True
-        points = {point:distance_from_point_to_line_segment(point, edge1)
-                  for point in points.keys() if all(lines_sees_points(enclosing_lines, [np.array(point)]))}
-        points = [(points[k], k) for k in points.keys() if points[k] > EPSILON]
-        if points:
-            closest_point = min(points)
+        points_of_interest = {}
+        for point in points.keys():
+            if all(lines_sees_points(enclosing_lines, [np.array(point)])):
+                d_to_my_edge = distance_from_point_to_line_segment(point, edge2)
+                d_to_other_edge = distance_from_point_to_line_segment(point, edge1)
+                if d_to_other_edge > EPSILON:
+                    points_of_interest[point] = d_to_other_edge/(d_to_my_edge + d_to_other_edge)
+        points_of_interest = [(v,k) for k,v in points_of_interest.items()]
+        if points_of_interest:
+            closest_point = min(points_of_interest)
             spanning_lines[1].append([edge2[0], np.array(closest_point[1])])
             spanning_lines[1].append([edge2[1], np.array(closest_point[1])])
     #
@@ -296,21 +306,42 @@ def linedef_visibility(linedat_i, linedat_j, all_solid_lines, line_graph, reject
             if segments_intersect(span_e1[0], span_e1[1], span_e2[0], span_e2[1]):
                 return (False, 'span_intersect')
     #
-    # project sight from src, through each spanline, onto tgt
+    # if an isolated spanlines intersects both edge spanlines then we're occluded
     #
     for line_collection in lines_1s_iso:
         points = {}
         for sli in line_collection:
             for point in [(all_solid_lines[sli][0][0], all_solid_lines[sli][0][1]), (all_solid_lines[sli][1][0], all_solid_lines[sli][1][1])]:
                 points[point] = True
-        points = {point:(distance_from_point_to_line_segment(point, edge1), distance_from_point_to_line_segment(point, edge2))
-                  for point in points.keys() if all(lines_sees_points(enclosing_lines, [np.array(point)]))}
-        points_e1 = [(points[k][0], k) for k in points.keys() if points[k][0] > EPSILON]
-        points_e2 = [(points[k][1], k) for k in points.keys() if points[k][1] > EPSILON]
+        points_e1 = {}
+        points_e2 = {}
+        for point in points.keys():
+            if all(lines_sees_points(enclosing_lines, [np.array(point)])):
+                d_to_edge1 = distance_from_point_to_line_segment(point, edge1)
+                d_to_edge2 = distance_from_point_to_line_segment(point, edge2)
+                if d_to_edge1 > EPSILON:
+                    points_e1[point] = d_to_edge1/(d_to_edge1 + d_to_edge2)
+                if d_to_edge2 > EPSILON:
+                    points_e2[point] = d_to_edge2/(d_to_edge1 + d_to_edge2)
+        points_e1 = [(v,k) for k,v in points_e1.items()]
+        points_e2 = [(v,k) for k,v in points_e2.items()]
         if points_e1 and points_e2:
             closest_point_e1 = min(points_e1)
             closest_point_e2 = min(points_e2)
             spanning_lines[2].append([np.array(closest_point_e1[1]), np.array(closest_point_e2[1])])
+    #
+    for span_iso in spanning_lines[2]:
+        (have_s1_int, have_s2_int) = (False, False)
+        for span_e1 in spanning_lines[0]:
+            if segments_intersect(span_iso[0], span_iso[1], span_e1[0], span_e1[1]):
+                have_s1_int = True
+                break
+        for span_e2 in spanning_lines[1]:
+            if segments_intersect(span_iso[0], span_iso[1], span_e2[0], span_e2[1]):
+                have_s2_int = True
+                break
+        if have_s1_int and have_s2_int:
+            return (False, 'span_intersect_iso')
     #
     # plotting
     #
@@ -335,10 +366,9 @@ def linedef_visibility(linedat_i, linedat_j, all_solid_lines, line_graph, reject
         mpl.savefig(plot_fn)
         mpl.close(fig)
     #
-    # if we're running in fast-mode just give up and say they're visible
+    # I tried so hard and got so far...
     #
     return (True, 'possibly_vis')
-    # a bfs clust of 1s lines can be assessed as individual lines connecting their edge intersections to their closest (nonzero) point to the opposite edge
 
 
 def linedef_visibility_parallel(all_2s_lines, li, n_portals, all_solid_lines, line_graph, reject_table, plot_prefix):
