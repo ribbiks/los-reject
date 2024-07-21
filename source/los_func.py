@@ -139,7 +139,7 @@ def line_graph_bfs(graph, starting_node, node_whitelist):
     return sorted(visited.keys())
 
 
-def linedef_visibility(linedat_i, linedat_j, all_solid_lines, line_graph, reject_table, my_inds, make_plot, plot_prefix=''):
+def linedef_visibility(linedat_i, linedat_j, all_solid_lines, line_graph, reject_table, plot_fn=''):
     [line_i, sectors_i] = linedat_i
     [line_j, sectors_j] = linedat_j
     #
@@ -151,31 +151,33 @@ def linedef_visibility(linedat_i, linedat_j, all_solid_lines, line_graph, reject
             if reject_table[si,sj] == IS_INVISIBLE:
                 already_visible = False
     if already_visible:
-        return (False, 'already_vis', my_inds)
+        return (False, 'already_vis')
     #
     # check for shared coordinates
     #
     for vert1 in line_i:
         for vert2 in line_j:
             if vert1[0] == vert2[0] and vert1[1] == vert2[1]:
-                return (True, 'shared_vertex', my_inds)
+                return (True, 'shared_vertex')
     #
-    # check distance (this is an inaccuracy for performance reasons on huge maps)
+    # check distance (this is an inaccuracy for improved performance on huge maps)
     #
-    delta = line_j[0] - line_i[0]
-    dist = delta[0]*delta[0] + delta[1]*delta[1]
-    if dist > MAX_PAIRWISE_DIST*MAX_PAIRWISE_DIST:
-        return (False, 'too_far', my_inds)
+    deltas = [line_j[0]-line_i[0], line_j[0]-line_i[1], line_j[1]-line_i[0], line_j[1]-line_i[1]]
+    dists = [n[0]*n[0] + n[1]*n[1] for n in deltas]
+    if min(dists) > MAX_PAIRWISE_DIST*MAX_PAIRWISE_DIST:
+        return (False, 'too_far')
     #
     # check collinearity
     #
     if check_collinearity(line_i, line_j):
-        return (False, 'collinear', my_inds)
+        return (False, 'collinear')
     #
     # orient line pair, get sightline edges
     #
-    if make_plot:
+    make_plot = False
+    if plot_fn:
         fig = mpl.figure(0, figsize=(9,9))
+        make_plot = True
     (l_src, l_tgt) = orient_src_and_tgt(line_i, line_j, make_plot)
     (edge1, edge2, tgt_enclosed) = get_src_tgt_edges(l_src, l_tgt, make_plot)
     enclosing_lines = [l_src, edge1, edge2]
@@ -224,12 +226,12 @@ def linedef_visibility(linedat_i, linedat_j, all_solid_lines, line_graph, reject
         # a single 1s line blocks our entire sightline
         if make_plot:
             mpl.close(fig)
-        return (False, 'trivial_block', my_inds)
+        return (False, 'trivial_block')
     if len(e1_ints) == 0 or len(e2_ints) == 0:
         # at least one of our sightline edges unblocked
         if make_plot:
             mpl.close(fig)
-        return (True, 'trivial_vis', my_inds)
+        return (True, 'trivial_vis')
     #
     # look for connected sets of 1s lines that collectively intersect both sightline edges
     #
@@ -253,17 +255,11 @@ def linedef_visibility(linedat_i, linedat_j, all_solid_lines, line_graph, reject
     if bfs_blocked:
         if make_plot:
             mpl.close(fig)
-        return (False, 'bfs_block', my_inds)
-    #
-    # ok, we actually have to do the serious visibility checks now
-    # -- alternately, if we're running in fast-mode just give up and say they're visible
-    #
-    return (True, 'possibly_vis', my_inds)
+        return (False, 'bfs_block')
     #
     # plotting
     #
     if make_plot:
-        plot_fn = f'{plot_prefix}.{my_inds[0]}.{my_inds[1]}.png'
         for sli,solid_line in enumerate(all_solid_lines):
             if sli in solid_lines_of_interest:
                 plot_line(solid_line, {'linewidth':1, 'color':'k', 'linestyle':'-'})
@@ -272,19 +268,24 @@ def linedef_visibility(linedat_i, linedat_j, all_solid_lines, line_graph, reject
         mpl.axis('scaled')
         mpl.savefig(plot_fn)
         mpl.close(fig)
+    #
+    # ok, we actually have to do the serious visibility checks now
+    # -- alternately, if we're running in fast-mode just give up and say they're visible
+    #
+    return (True, 'possibly_vis')
+    # a bfs clust of 1s lines can be assessed as individual lines connecting their edge intersections to their closest (nonzero) point to the opposite edge
 
 
-def linedef_visibility_parallel(all_2s_lines, li, n_portals, all_solid_lines, line_graph, reject_table, PLOTTING, plot_prefix):
+def linedef_visibility_parallel(all_2s_lines, li, n_portals, all_solid_lines, line_graph, reject_table, plot_prefix):
     reject_out = np.zeros((reject_table.shape[0], reject_table.shape[1]), dtype='bool') + IS_INVISIBLE
     for lj in range(li+1, n_portals):
-        (vis_bool, vis_type, my_inds) = linedef_visibility(all_2s_lines[li],
-                                                           all_2s_lines[lj],
-                                                           all_solid_lines,
-                                                           line_graph,
-                                                           reject_table,
-                                                           (li, lj),
-                                                           PLOTTING,
-                                                           plot_prefix)
+        plot_fn = f'{plot_prefix}.{li}.{lj}.png'
+        (vis_bool, vis_type) = linedef_visibility(all_2s_lines[li],
+                                                  all_2s_lines[lj],
+                                                  all_solid_lines,
+                                                  line_graph,
+                                                  reject_table,
+                                                  plot_fn)
         if vis_bool:
             for si in all_2s_lines[li][1]:
                 for sj in all_2s_lines[lj][1]:
@@ -292,4 +293,4 @@ def linedef_visibility_parallel(all_2s_lines, li, n_portals, all_solid_lines, li
                     reject_table[sj,si] = IS_VISIBLE
                     reject_out[si,sj] = IS_VISIBLE
                     reject_out[sj,si] = IS_VISIBLE
-    return (li, reject_out)
+    return reject_out
