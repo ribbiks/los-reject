@@ -76,7 +76,7 @@ def plot_line(line, kwargs={}, normal_kwargs={}, normal_len_frac=0.1):
         mpl.plot([nline[0][0], nline[1][0]], [nline[0][1], nline[1][1]], label='_nolegend_', **normal_kwargs)
 
 
-def orient_src_and_tgt(l_src, l_tgt, plotting=False):
+def orient_src_and_tgt(l_src, l_tgt):
     # if src is not facing tgt, flip src
     tvis = line_sees_points(l_src, l_tgt)
     if tvis[0] is False and tvis[1] is False:
@@ -94,13 +94,10 @@ def orient_src_and_tgt(l_src, l_tgt, plotting=False):
     # if tgt is not facing src, flip tgt
     if line_sees_point(l_tgt, (l_src[0] + l_src[1])/2.0) is False:
         l_tgt = [l_tgt[1], l_tgt[0]]
-    if plotting:
-        plot_line(l_src, {'linewidth':2, 'color':'g', 'linestyle':'-'}, {'linewidth':1, 'color':'g', 'linestyle':'--'})
-        plot_line(l_tgt, {'linewidth':2, 'color':'b', 'linestyle':'-'}, {'linewidth':1, 'color':'b', 'linestyle':'--'})
     return (l_src, l_tgt)
 
 
-def get_src_tgt_edges(l_src, l_tgt, plotting=False):
+def get_src_tgt_edges(l_src, l_tgt):
     int1 = segments_intersect(l_src[0], l_tgt[0], l_src[1], l_tgt[1])
     int2 = segments_intersect(l_src[0], l_tgt[1], l_src[1], l_tgt[0])
     tgt_enclosed = False
@@ -128,9 +125,6 @@ def get_src_tgt_edges(l_src, l_tgt, plotting=False):
         edge1 = [edge1[1], edge1[0]]
     if line_sees_point(edge2, l_src[0]) is False:
         edge2 = [edge2[1], edge2[0]]
-    if plotting:
-        plot_line(edge1, {'linewidth':1, 'color':'r', 'linestyle':'--'})
-        plot_line(edge2, {'linewidth':1, 'color':'r', 'linestyle':'--'})
     return (edge1, edge2, tgt_enclosed)
 
 
@@ -181,12 +175,8 @@ def linedef_visibility(linedat_i, linedat_j, all_solid_lines, line_graph, reject
     #
     # orient line pair, get sightline edges
     #
-    make_plot = False
-    if plot_fn:
-        fig = mpl.figure(0, figsize=(9,9))
-        make_plot = True
-    (l_src, l_tgt) = orient_src_and_tgt(line_i, line_j, make_plot)
-    (edge1, edge2, tgt_enclosed) = get_src_tgt_edges(l_src, l_tgt, make_plot)
+    (l_src, l_tgt) = orient_src_and_tgt(line_i, line_j)
+    (edge1, edge2, tgt_enclosed) = get_src_tgt_edges(l_src, l_tgt)
     enclosing_lines = [l_src, edge1, edge2]
     if tgt_enclosed is False:
         enclosing_lines.append(l_tgt)
@@ -231,13 +221,9 @@ def linedef_visibility(linedat_i, linedat_j, all_solid_lines, line_graph, reject
             break
     if trivial_blocked:
         # a single 1s line blocks our entire sightline
-        if make_plot:
-            mpl.close(fig)
         return (False, 'trivial_block')
     if len(e1_ints) == 0 or len(e2_ints) == 0:
         # at least one of our sightline edges unblocked
-        if make_plot:
-            mpl.close(fig)
         return (True, 'trivial_vis')
     #
     # look for connected sets of 1s lines that collectively intersect both sightline edges
@@ -246,8 +232,10 @@ def linedef_visibility(linedat_i, linedat_j, all_solid_lines, line_graph, reject
         solid_line = all_solid_lines[sli]
         if any(lines_sees_points(enclosing_lines, solid_line)):
             solid_lines_of_interest[sli] = True
-    bfs_blocked = False
     lines_visited = {}
+    lines_1s_e1 = []
+    lines_1s_e2 = []
+    lines_1s_iso = []
     for lk in solid_lines_of_interest.keys():
         if lk not in lines_visited:
             l_visited = line_graph_bfs(line_graph, lk, solid_lines_of_interest)
@@ -257,27 +245,97 @@ def linedef_visibility(linedat_i, linedat_j, all_solid_lines, line_graph, reject
                 hit_e1 |= myv in e1_ints
                 hit_e2 |= myv in e2_ints
             if hit_e1 and hit_e2:
-                bfs_blocked = True
-                break
-    if bfs_blocked:
-        if make_plot:
-            mpl.close(fig)
-        return (False, 'bfs_block')
+                # this collection of lines intersects both edges
+                return (False, 'bfs_block')
+            if hit_e1:
+                lines_1s_e1.append(l_visited)
+            elif hit_e2:
+                lines_1s_e2.append(l_visited)
+            else:
+                lines_1s_iso.append(l_visited)
+    #
+    # collapse windings into spanning lines
+    #
+    spanning_lines = [[], [], []]
+    for line_collection in lines_1s_e1:
+        points = {}
+        for sli in line_collection:
+            for point in [(all_solid_lines[sli][0][0], all_solid_lines[sli][0][1]), (all_solid_lines[sli][1][0], all_solid_lines[sli][1][1])]:
+                v1 = np.array(point) - edge1[0]
+                v2 = np.array(point) - edge1[1]
+                if v1[0]*v1[0] + v1[1]*v1[1] > EPSILON and v2[0]*v2[0] + v2[1]*v2[1] > EPSILON:
+                    points[point] = True
+        points = {point:distance_from_point_to_line_segment(point, edge2)
+                  for point in points.keys() if all(lines_sees_points(enclosing_lines, [np.array(point)]))}
+        points = [(points[k], k) for k in points.keys() if points[k] > EPSILON]
+        if points:
+            closest_point = min(points)
+            spanning_lines[0].append([edge1[0], np.array(closest_point[1])])
+            spanning_lines[0].append([edge1[1], np.array(closest_point[1])])
+    #
+    for line_collection in lines_1s_e2:
+        points = {}
+        for sli in line_collection:
+            for point in [(all_solid_lines[sli][0][0], all_solid_lines[sli][0][1]), (all_solid_lines[sli][1][0], all_solid_lines[sli][1][1])]:
+                v1 = np.array(point) - edge2[0]
+                v2 = np.array(point) - edge2[1]
+                if v1[0]*v1[0] + v1[1]*v1[1] > EPSILON and v2[0]*v2[0] + v2[1]*v2[1] > EPSILON:
+                    points[point] = True
+        points = {point:distance_from_point_to_line_segment(point, edge1)
+                  for point in points.keys() if all(lines_sees_points(enclosing_lines, [np.array(point)]))}
+        points = [(points[k], k) for k in points.keys() if points[k] > EPSILON]
+        if points:
+            closest_point = min(points)
+            spanning_lines[1].append([edge2[0], np.array(closest_point[1])])
+            spanning_lines[1].append([edge2[1], np.array(closest_point[1])])
+    #
+    # if opposite spanlines intersect then we're occluded
+    #
+    for span_e1 in spanning_lines[0]:
+        for span_e2 in spanning_lines[1]:
+            if segments_intersect(span_e1[0], span_e1[1], span_e2[0], span_e2[1]):
+                return (False, 'span_intersect')
+    #
+    # project sight from src, through each spanline, onto tgt
+    #
+    for line_collection in lines_1s_iso:
+        points = {}
+        for sli in line_collection:
+            for point in [(all_solid_lines[sli][0][0], all_solid_lines[sli][0][1]), (all_solid_lines[sli][1][0], all_solid_lines[sli][1][1])]:
+                points[point] = True
+        points = {point:(distance_from_point_to_line_segment(point, edge1), distance_from_point_to_line_segment(point, edge2))
+                  for point in points.keys() if all(lines_sees_points(enclosing_lines, [np.array(point)]))}
+        points_e1 = [(points[k][0], k) for k in points.keys() if points[k][0] > EPSILON]
+        points_e2 = [(points[k][1], k) for k in points.keys() if points[k][1] > EPSILON]
+        if points_e1 and points_e2:
+            closest_point_e1 = min(points_e1)
+            closest_point_e2 = min(points_e2)
+            spanning_lines[2].append([np.array(closest_point_e1[1]), np.array(closest_point_e2[1])])
     #
     # plotting
     #
-    if make_plot:
+    if plot_fn:
+        fig = mpl.figure(0, figsize=(9,9))
         for sli,solid_line in enumerate(all_solid_lines):
             if sli in solid_lines_of_interest:
                 plot_line(solid_line, {'linewidth':1, 'color':'k', 'linestyle':'-'})
             else:
                 plot_line(solid_line, {'linewidth':0.5, 'color':'k', 'linestyle':'--'})
+        plot_line(l_src, {'linewidth':2, 'color':'g', 'linestyle':'-'}, {'linewidth':1, 'color':'g', 'linestyle':'--'})
+        plot_line(l_tgt, {'linewidth':2, 'color':'b', 'linestyle':'-'}, {'linewidth':1, 'color':'b', 'linestyle':'--'})
+        plot_line(edge1, {'linewidth':1, 'color':'r', 'linestyle':'--'})
+        plot_line(edge2, {'linewidth':1, 'color':'r', 'linestyle':'--'})
+        for spanline in spanning_lines[0]:
+            plot_line(spanline, {'linewidth':1, 'color':'r', 'linestyle':'-'})
+        for spanline in spanning_lines[1]:
+            plot_line(spanline, {'linewidth':1, 'color':'r', 'linestyle':'-'})
+        for spanline in spanning_lines[2]:
+            plot_line(spanline, {'linewidth':1, 'color':'r', 'linestyle':'-'})
         mpl.axis('scaled')
         mpl.savefig(plot_fn)
         mpl.close(fig)
     #
-    # ok, we actually have to do the serious visibility checks now
-    # -- alternately, if we're running in fast-mode just give up and say they're visible
+    # if we're running in fast-mode just give up and say they're visible
     #
     return (True, 'possibly_vis')
     # a bfs clust of 1s lines can be assessed as individual lines connecting their edge intersections to their closest (nonzero) point to the opposite edge
