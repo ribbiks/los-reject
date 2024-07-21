@@ -6,6 +6,7 @@ from collections import deque
 from source.wad_func import IS_INVISIBLE, IS_VISIBLE
 
 EPSILON = 0.1
+MAX_PAIRWISE_DIST = 16000
 
 
 def ccw(A, B, C):
@@ -158,6 +159,13 @@ def linedef_visibility(linedat_i, linedat_j, all_solid_lines, line_graph, reject
         for vert2 in line_j:
             if vert1[0] == vert2[0] and vert1[1] == vert2[1]:
                 return (True, 'shared_vertex', my_inds)
+    #
+    # check distance (this is an inaccuracy for performance reasons on huge maps)
+    #
+    delta = line_j[0] - line_i[0]
+    dist = delta[0]*delta[0] + delta[1]*delta[1]
+    if dist > MAX_PAIRWISE_DIST*MAX_PAIRWISE_DIST:
+        return (False, 'too_far', my_inds)
     #
     # check collinearity
     #
