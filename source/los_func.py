@@ -226,12 +226,10 @@ def linedef_visibility(linedat_i, linedat_j, all_solid_lines, line_graph, reject
     #
     # look for connected sets of 1s lines that collectively intersect both sightline edges
     #
-    tt = time.perf_counter()
     for sli in solid_line_candidates:
         solid_line = all_solid_lines[sli]
         if any(lines_sees_points(enclosing_lines, solid_line)):
             solid_lines_of_interest[sli] = True
-    print(time.perf_counter()-tt)
     bfs_blocked = False
     lines_visited = {}
     for lk in solid_lines_of_interest.keys():
