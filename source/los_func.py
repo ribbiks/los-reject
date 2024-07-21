@@ -1,10 +1,9 @@
 import matplotlib.pyplot as mpl
 import numpy as np
-import time
 
 from collections import deque
 
-from source.wad_func import IS_INVISIBLE
+from source.wad_func import IS_INVISIBLE, IS_VISIBLE
 
 EPSILON = 0.1
 
@@ -265,3 +264,24 @@ def linedef_visibility(linedat_i, linedat_j, all_solid_lines, line_graph, reject
         mpl.axis('scaled')
         mpl.savefig(plot_fn)
         mpl.close(fig)
+
+
+def linedef_visibility_parallel(all_2s_lines, li, n_portals, all_solid_lines, line_graph, reject_table, PLOTTING, plot_prefix):
+    reject_out = np.zeros((reject_table.shape[0], reject_table.shape[1]), dtype='bool') + IS_INVISIBLE
+    for lj in range(li+1, n_portals):
+        (vis_bool, vis_type, my_inds) = linedef_visibility(all_2s_lines[li],
+                                                           all_2s_lines[lj],
+                                                           all_solid_lines,
+                                                           line_graph,
+                                                           reject_table,
+                                                           (li, lj),
+                                                           PLOTTING,
+                                                           plot_prefix)
+        if vis_bool:
+            for si in all_2s_lines[li][1]:
+                for sj in all_2s_lines[lj][1]:
+                    reject_table[si,sj] = IS_VISIBLE
+                    reject_table[sj,si] = IS_VISIBLE
+                    reject_out[si,sj] = IS_VISIBLE
+                    reject_out[sj,si] = IS_VISIBLE
+    return (li, reject_out)

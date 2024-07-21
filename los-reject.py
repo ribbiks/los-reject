@@ -3,7 +3,9 @@ import argparse
 import numpy as np
 import time
 
-from source.los_func import linedef_visibility
+from concurrent.futures import as_completed, ProcessPoolExecutor
+
+from source.los_func import linedef_visibility, linedef_visibility_parallel
 from source.wad_func import *
 
 
@@ -12,11 +14,13 @@ def main(raw_args=None):
     parser.add_argument('-i', type=str, required=True,  metavar='input.wad',  help="* Input WAD")
     parser.add_argument('-m', type=str, required=True,  metavar='MAP01',      help="* Map name")
     parser.add_argument('-r', type=str, required=True,  metavar='REJECT.lmp', help="* Output reject table lmp")
+    parser.add_argument('-p', type=int, required=False, metavar='4',          help="Number of processes to use", default=4)
     args = parser.parse_args()
     #
     IN_WAD = args.i
     WHICH_MAP = args.m
     OUT_REJECT = args.r
+    NUM_PROCESSES = args.p
     PLOTTING = False
     plot_prefix = OUT_REJECT
 
@@ -54,25 +58,35 @@ def main(raw_args=None):
     # pairwise compare all 2s lines
     tt = time.perf_counter()
     vis_type_count = {}
-    for li in range(n_portals):
-        for lj in range(li+1, n_portals):
-            (vis_bool, vis_type, my_inds) = linedef_visibility(all_2s_lines[li],
-                                                               all_2s_lines[lj],
-                                                               all_solid_lines,
-                                                               line_graph,
-                                                               reject_table,
-                                                               (li, lj),
-                                                               PLOTTING,
-                                                               plot_prefix)
-            if vis_bool:
-                for si in all_2s_lines[li][1]:
-                    for sj in all_2s_lines[lj][1]:
-                        reject_table[si,sj] = IS_VISIBLE
-                        reject_table[sj,si] = IS_VISIBLE
-            if vis_type not in vis_type_count:
-                vis_type_count[vis_type] = 0
-            vis_type_count[vis_type] += 1
-        print(f'{li+1} / {n_portals} ({int(time.perf_counter() - tt)} sec)')
+    if NUM_PROCESSES <= 1:
+        for li in range(n_portals):
+            for lj in range(li+1, n_portals):
+                (vis_bool, vis_type, my_inds) = linedef_visibility(all_2s_lines[li],
+                                                                   all_2s_lines[lj],
+                                                                   all_solid_lines,
+                                                                   line_graph,
+                                                                   reject_table,
+                                                                   (li, lj),
+                                                                   PLOTTING,
+                                                                   plot_prefix)
+                if vis_bool:
+                    for si in all_2s_lines[li][1]:
+                        for sj in all_2s_lines[lj][1]:
+                            reject_table[si,sj] = IS_VISIBLE
+                            reject_table[sj,si] = IS_VISIBLE
+                if vis_type not in vis_type_count:
+                    vis_type_count[vis_type] = 0
+                vis_type_count[vis_type] += 1
+                #print(my_inds, vis_bool, vis_type)
+            print(f'{li+1} / {n_portals} ({int(time.perf_counter() - tt)} sec)')
+    #
+    else:
+        with ProcessPoolExecutor(max_workers=NUM_PROCESSES) as executor:
+            futures = [executor.submit(linedef_visibility_parallel, all_2s_lines, li, n_portals, all_solid_lines, line_graph, reject_table, PLOTTING, plot_prefix) for li in range(n_portals)]
+            for future in as_completed(futures):
+                (li, new_rej) = future.result()
+                reject_table &= new_rej
+                print(f'{li} ({int(time.perf_counter() - tt)} sec)')
 
     for k in sorted(vis_type_count.keys()):
         print(vis_type_count[k], k)
