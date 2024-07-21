@@ -1,5 +1,6 @@
 import matplotlib.pyplot as mpl
 import numpy as np
+import time
 
 from collections import deque
 
@@ -176,7 +177,22 @@ def linedef_visibility(linedat_i, linedat_j, all_solid_lines, line_graph, reject
     #
     # get all 1s lines in the sight area and check for intersections with sightline edges
     #
-    solid_line_candidates = list(range(len(all_solid_lines))) # TODO: replace with a more efficient way of querying all_solid_lines
+    solid_line_candidates = []
+    x_min = min(l_src[0][0], l_src[1][0], l_tgt[0][0], l_tgt[1][0])
+    x_max = max(l_src[0][0], l_src[1][0], l_tgt[0][0], l_tgt[1][0])
+    y_min = min(l_src[0][1], l_src[1][1], l_tgt[0][1], l_tgt[1][1])
+    y_max = max(l_src[0][1], l_src[1][1], l_tgt[0][1], l_tgt[1][1])
+    for sli,solid_line in enumerate(all_solid_lines):
+        if solid_line[0][0] < x_min and solid_line[1][0] < x_min:
+            continue
+        if solid_line[0][0] > x_max and solid_line[1][0] > x_max:
+            continue
+        if solid_line[0][1] < y_min and solid_line[1][1] < y_min:
+            continue
+        if solid_line[0][1] > y_max and solid_line[1][1] > y_max:
+            continue
+        solid_line_candidates.append(sli)
+    #
     solid_lines_of_interest = {}
     e1_ints = {}
     e2_ints = {}
@@ -210,10 +226,12 @@ def linedef_visibility(linedat_i, linedat_j, all_solid_lines, line_graph, reject
     #
     # look for connected sets of 1s lines that collectively intersect both sightline edges
     #
+    tt = time.perf_counter()
     for sli in solid_line_candidates:
         solid_line = all_solid_lines[sli]
         if any(lines_sees_points(enclosing_lines, solid_line)):
             solid_lines_of_interest[sli] = True
+    print(time.perf_counter()-tt)
     bfs_blocked = False
     lines_visited = {}
     for lk in solid_lines_of_interest.keys():
