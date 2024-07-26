@@ -122,11 +122,12 @@ def get_vertexes(map_data):
     return normal_verts
 
 
-def get_lines_by_type(line_list, side_list, vert_list):
+def process_map_data(line_list, side_list, vert_list):
     all_solid_lines = []
     all_2s_lines = []
     line_graph = {}
     line_ind_by_vert = {}
+    sect_graph = {}
     for li,line in enumerate(line_list):
         (start_vertex, end_vertex, line_flags, line_special, line_tag, sidedef_front, sidedef_back) = line
         vert1 = vert_list[start_vertex]
@@ -149,10 +150,15 @@ def get_lines_by_type(line_list, side_list, vert_list):
             line_graph[solid_ind] = []
         elif len(my_sectors) == 2 and my_sectors[0] != my_sectors[1]:
             all_2s_lines.append([[np.array(vert1), np.array(vert2)], my_sectors])
+            for si in [(0,1), (1,0)]:
+                if my_sectors[si[0]] not in sect_graph:
+                    sect_graph[my_sectors[si[0]]] = [my_sectors[si[1]]]
+                elif my_sectors[si[1]] not in sect_graph[my_sectors[si[0]]]:
+                    sect_graph[my_sectors[si[0]]].append(my_sectors[si[1]])
     for vert in line_ind_by_vert.keys():
         li_list = line_ind_by_vert[vert]
         for i in li_list:
             for j in li_list:
                 if i != j:
                     line_graph[i].append(j)
-    return (all_solid_lines, all_2s_lines, line_graph)
+    return (all_solid_lines, all_2s_lines, line_graph, sect_graph)

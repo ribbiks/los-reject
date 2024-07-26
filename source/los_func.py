@@ -1,8 +1,7 @@
 import matplotlib.pyplot as mpl
 import numpy as np
 
-from collections import deque
-
+from source.graph_func import graph_bfs
 from source.wad_func import IS_INVISIBLE, IS_VISIBLE
 
 EPSILON = 0.1
@@ -18,22 +17,45 @@ def segments_intersect(A, B, C, D):
     return bool(ccw(A,C,D) != ccw(B,C,D) and ccw(A,B,C) != ccw(A,B,D))
 
 
-def line_sees_point(line, point):
+def line_sees_point_old(line, point):
     d1 = line[1] - line[0]
     n1 = [-d1[1], d1[0]]
     mid1 = (line[0] + line[1])/2.0
     return bool(np.dot(n1, point - mid1) > -EPSILON)
 
 
-def line_sees_points(line, points):
+def line_sees_points_old(line, points):
     d1 = line[1] - line[0]
     n1 = [-d1[1], d1[0]]
     mid1 = (line[0] + line[1])/2.0
     return [bool(np.dot(n1, point - mid1) > -EPSILON) for point in points]
 
 
-# True = point is seen by all lines in list
-def lines_sees_points(lines, points):
+def prepare_line(line):
+    x1, y1 = line[0]
+    x2, y2 = line[1]
+    return y2 - y1, x1 - x2, x2*y1 - x1*y2
+
+
+def prepline_sees_point(prepared_line, point):
+    a, b, c = prepared_line
+    x, y = point
+    return bool(a * x + b * y + c < EPSILON)
+
+
+def line_sees_point(line, point):
+    x1, y1 = line[0]
+    x2, y2 = line[1]
+    px, py = point
+    return bool((y2 - y1) * (px - x1) - (x2 - x1) * (py - y1) < EPSILON)
+
+
+def line_sees_points(line, points):
+    prepared_line = prepare_line(line)
+    return [prepline_sees_point(prepared_line, point) for point in points]
+
+
+def lines_sees_points_old(lines, points):
     n_list = []
     mid_list = []
     for line in lines:
@@ -47,6 +69,20 @@ def lines_sees_points(lines, points):
                 vis_out[pi] = False
                 break
     return vis_out
+
+
+def lines_sees_points(lines, points):
+    lines = np.array(lines)
+    points = np.array(points)
+    # Precompute line coefficients (A, B, C) for Ax + By + C = 0
+    line_coeffs = np.zeros((len(lines), 3))
+    line_coeffs[:,0] = lines[:,1,1] - lines[:,0,1]  # A = y2 - y1
+    line_coeffs[:,1] = lines[:,0,0] - lines[:,1,0]  # B = x1 - x2
+    line_coeffs[:,2] = lines[:,1,0] * lines[:,0,1] - lines[:,0,0] * lines[:,1,1]  # C = x2*y1 - x1*y2
+    # Vectorized visibility check
+    visibility = np.dot(points, line_coeffs[:,:2].T) + line_coeffs[:,2] < EPSILON
+    # A point is visible if it's visible from all lines
+    return np.all(visibility, axis=1)
 
 
 def check_collinearity(l1, l2):
@@ -128,16 +164,37 @@ def get_src_tgt_edges(l_src, l_tgt):
     return (edge1, edge2, tgt_enclosed)
 
 
-def line_graph_bfs(graph, starting_node, node_whitelist):
-    queue = deque([(starting_node, [])])
-    visited = {}
-    while queue:
-        (node, path) = queue.popleft()
-        visited[node] = True
-        for neighbor in graph[node]:
-            if neighbor in node_whitelist and neighbor not in path:
-                queue.append((neighbor, path+[node]))
-    return sorted(visited.keys())
+def get_span_of_polylines(line_collection_list, my_edge, other_edge, solid_lines_of_interest, all_solid_lines, both_edges=False):
+    out_spans = []
+    for line_collection in line_collection_list:
+        points_analyzed = {}
+        closest_point = None
+        closest_point_2 = None
+        for sli in line_collection:
+            for i in range(2):
+                if solid_lines_of_interest[sli][i]:
+                    point = all_solid_lines[sli][i]
+                    pkey = (int(point[0]), int(point[1]))
+                    if pkey in points_analyzed:
+                        continue
+                    points_analyzed[pkey] = True
+                    d_to_my_edge = distance_from_point_to_line_segment(point, my_edge)
+                    d_to_other_edge = distance_from_point_to_line_segment(point, other_edge)
+                    if d_to_my_edge > EPSILON and d_to_other_edge > EPSILON:
+                        d_frac = d_to_other_edge/(d_to_my_edge + d_to_other_edge)
+                        if closest_point is None or d_frac < closest_point[0]:
+                            closest_point = (d_frac, point)
+                        if both_edges:
+                            d_frac_2 = d_to_my_edge/(d_to_my_edge + d_to_other_edge)
+                            if closest_point_2 is None or d_frac_2 < closest_point_2[0]:
+                                closest_point_2 = (d_frac_2, point)
+        if closest_point is not None:
+            if both_edges is False:
+                out_spans.append([my_edge[0], closest_point[1]])
+                out_spans.append([my_edge[1], closest_point[1]])
+            elif closest_point_2 is not None:
+                out_spans.append([closest_point[1], closest_point_2[1]])
+    return out_spans
 
 
 def linedef_visibility(linedat_i, linedat_j, all_solid_lines, line_graph, reject_table, plot_fn=''):
@@ -181,9 +238,10 @@ def linedef_visibility(linedat_i, linedat_j, all_solid_lines, line_graph, reject
     if tgt_enclosed is False:
         enclosing_lines.append(l_tgt)
     #
-    # get all 1s lines in the sight area and check for intersections with sightline edges
+    # get all 1s lines that are within our sight area
     #
     solid_line_candidates = []
+    solid_line_points = []
     x_min = min(l_src[0][0], l_src[1][0], l_tgt[0][0], l_tgt[1][0])
     x_max = max(l_src[0][0], l_src[1][0], l_tgt[0][0], l_tgt[1][0])
     y_min = min(l_src[0][1], l_src[1][1], l_tgt[0][1], l_tgt[1][1])
@@ -198,8 +256,17 @@ def linedef_visibility(linedat_i, linedat_j, all_solid_lines, line_graph, reject
         if solid_line[0][1] > y_max and solid_line[1][1] > y_max:
             continue
         solid_line_candidates.append(sli)
-    #
+        solid_line_points.extend(solid_line)
+    if len(solid_line_candidates) == 0:
+        return (True, 'no_1s_lines')
     solid_lines_of_interest = {}
+    enclosed_solid_points = lines_sees_points(enclosing_lines, solid_line_points)
+    for i in range(0,len(enclosed_solid_points),2):
+        if enclosed_solid_points[i] or enclosed_solid_points[i+1]:
+            solid_lines_of_interest[solid_line_candidates[i//2]] = (enclosed_solid_points[i], enclosed_solid_points[i+1])
+    #
+    # check 1s lines for intersections with sightline edges
+    #
     e1_ints = {}
     e2_ints = {}
     seed_lines = {}
@@ -210,11 +277,9 @@ def linedef_visibility(linedat_i, linedat_j, all_solid_lines, line_graph, reject
         int2 = segments_intersect(solid_line[0], solid_line[1], edge2[0], edge2[1])
         if int1:
             e1_ints[sli] = True
-            solid_lines_of_interest[sli] = True
             seed_lines[sli] = True
         if int2:
             e2_ints[sli] = True
-            solid_lines_of_interest[sli] = True
             seed_lines[sli] = True
         if int1 and int2:
             trivial_blocked = True
@@ -228,17 +293,13 @@ def linedef_visibility(linedat_i, linedat_j, all_solid_lines, line_graph, reject
     #
     # look for connected sets of 1s lines that collectively intersect both sightline edges
     #
-    for sli in solid_line_candidates:
-        solid_line = all_solid_lines[sli]
-        if any(lines_sees_points(enclosing_lines, solid_line)):
-            solid_lines_of_interest[sli] = True
     lines_visited = {}
     lines_1s_e1 = []
     lines_1s_e2 = []
     lines_1s_iso = []
-    for lk in solid_lines_of_interest.keys():
-        if lk not in lines_visited:
-            l_visited = line_graph_bfs(line_graph, lk, solid_lines_of_interest)
+    for sli in solid_lines_of_interest.keys():
+        if sli not in lines_visited:
+            l_visited = graph_bfs(line_graph, sli, solid_lines_of_interest)
             (hit_e1, hit_e2) = (False, False)
             for myv in l_visited:
                 lines_visited[myv] = True
@@ -254,53 +315,10 @@ def linedef_visibility(linedat_i, linedat_j, all_solid_lines, line_graph, reject
             else:
                 lines_1s_iso.append(l_visited)
     #
-    # collapse windings into spanning lines
+    # collapse polylines into spanning lines, if opposite spanlines intersect then we're occluded
     #
-    spanning_lines = [[], [], []]
-    for line_collection in lines_1s_e1:
-        points = {}
-        for sli in line_collection:
-            for point in [(all_solid_lines[sli][0][0], all_solid_lines[sli][0][1]), (all_solid_lines[sli][1][0], all_solid_lines[sli][1][1])]:
-                v1 = np.array(point) - edge1[0]
-                v2 = np.array(point) - edge1[1]
-                if v1[0]*v1[0] + v1[1]*v1[1] > EPSILON and v2[0]*v2[0] + v2[1]*v2[1] > EPSILON:
-                    points[point] = True
-        points_of_interest = {}
-        for point in points.keys():
-            if all(lines_sees_points(enclosing_lines, [np.array(point)])):
-                d_to_my_edge = distance_from_point_to_line_segment(point, edge1)
-                d_to_other_edge = distance_from_point_to_line_segment(point, edge2)
-                if d_to_other_edge > EPSILON:
-                    points_of_interest[point] = d_to_other_edge/(d_to_my_edge + d_to_other_edge)
-        points_of_interest = [(v,k) for k,v in points_of_interest.items()]
-        if points_of_interest:
-            closest_point = min(points_of_interest)
-            spanning_lines[0].append([edge1[0], np.array(closest_point[1])])
-            spanning_lines[0].append([edge1[1], np.array(closest_point[1])])
-    #
-    for line_collection in lines_1s_e2:
-        points = {}
-        for sli in line_collection:
-            for point in [(all_solid_lines[sli][0][0], all_solid_lines[sli][0][1]), (all_solid_lines[sli][1][0], all_solid_lines[sli][1][1])]:
-                v1 = np.array(point) - edge2[0]
-                v2 = np.array(point) - edge2[1]
-                if v1[0]*v1[0] + v1[1]*v1[1] > EPSILON and v2[0]*v2[0] + v2[1]*v2[1] > EPSILON:
-                    points[point] = True
-        points_of_interest = {}
-        for point in points.keys():
-            if all(lines_sees_points(enclosing_lines, [np.array(point)])):
-                d_to_my_edge = distance_from_point_to_line_segment(point, edge2)
-                d_to_other_edge = distance_from_point_to_line_segment(point, edge1)
-                if d_to_other_edge > EPSILON:
-                    points_of_interest[point] = d_to_other_edge/(d_to_my_edge + d_to_other_edge)
-        points_of_interest = [(v,k) for k,v in points_of_interest.items()]
-        if points_of_interest:
-            closest_point = min(points_of_interest)
-            spanning_lines[1].append([edge2[0], np.array(closest_point[1])])
-            spanning_lines[1].append([edge2[1], np.array(closest_point[1])])
-    #
-    # if opposite spanlines intersect then we're occluded
-    #
+    spanning_lines = [get_span_of_polylines(lines_1s_e1, edge1, edge2, solid_lines_of_interest, all_solid_lines),
+                      get_span_of_polylines(lines_1s_e2, edge2, edge1, solid_lines_of_interest, all_solid_lines)]
     for span_e1 in spanning_lines[0]:
         for span_e2 in spanning_lines[1]:
             if segments_intersect(span_e1[0], span_e1[1], span_e2[0], span_e2[1]):
@@ -308,28 +326,7 @@ def linedef_visibility(linedat_i, linedat_j, all_solid_lines, line_graph, reject
     #
     # if an isolated spanlines intersects both edge spanlines then we're occluded
     #
-    for line_collection in lines_1s_iso:
-        points = {}
-        for sli in line_collection:
-            for point in [(all_solid_lines[sli][0][0], all_solid_lines[sli][0][1]), (all_solid_lines[sli][1][0], all_solid_lines[sli][1][1])]:
-                points[point] = True
-        points_e1 = {}
-        points_e2 = {}
-        for point in points.keys():
-            if all(lines_sees_points(enclosing_lines, [np.array(point)])):
-                d_to_edge1 = distance_from_point_to_line_segment(point, edge1)
-                d_to_edge2 = distance_from_point_to_line_segment(point, edge2)
-                if d_to_edge1 > EPSILON:
-                    points_e1[point] = d_to_edge1/(d_to_edge1 + d_to_edge2)
-                if d_to_edge2 > EPSILON:
-                    points_e2[point] = d_to_edge2/(d_to_edge1 + d_to_edge2)
-        points_e1 = [(v,k) for k,v in points_e1.items()]
-        points_e2 = [(v,k) for k,v in points_e2.items()]
-        if points_e1 and points_e2:
-            closest_point_e1 = min(points_e1)
-            closest_point_e2 = min(points_e2)
-            spanning_lines[2].append([np.array(closest_point_e1[1]), np.array(closest_point_e2[1])])
-    #
+    spanning_lines.append(get_span_of_polylines(lines_1s_iso, edge1, edge2, solid_lines_of_interest, all_solid_lines, both_edges=True))
     for span_iso in spanning_lines[2]:
         (have_s1_int, have_s2_int) = (False, False)
         for span_e1 in spanning_lines[0]:

@@ -5,12 +5,13 @@ import time
 
 from concurrent.futures import as_completed, ProcessPoolExecutor
 
-from source.los_func import linedef_visibility, linedef_visibility_parallel
-from source.wad_func import *
+from source.graph_func import find_articulation_points, graph_bfs
+from source.los_func   import linedef_visibility, linedef_visibility_parallel
+from source.wad_func   import *
 
 
 def main(raw_args=None):
-    parser = argparse.ArgumentParser(description='pvs-reject', formatter_class=argparse.ArgumentDefaultsHelpFormatter,)
+    parser = argparse.ArgumentParser(description='los-reject', formatter_class=argparse.ArgumentDefaultsHelpFormatter,)
     parser.add_argument('-i', type=str, required=True,  metavar='input.wad',  help="* Input WAD")
     parser.add_argument('-m', type=str, required=True,  metavar='MAP01',      help="* Map name")
     parser.add_argument('-r', type=str, required=True,  metavar='REJECT.lmp', help="* Output reject table lmp")
@@ -37,7 +38,7 @@ def main(raw_args=None):
     sect_list = get_sectors(map_data)
     vert_list = get_vertexes(map_data)
 
-    (all_solid_lines, all_2s_lines, line_graph) = get_lines_by_type(line_list, side_list, vert_list)
+    (all_solid_lines, all_2s_lines, line_graph, sect_graph) = process_map_data(line_list, side_list, vert_list)
     n_linedefs = len(line_list)
     n_sectors = len(sect_list)
     n_portals = len(all_2s_lines)
@@ -46,6 +47,24 @@ def main(raw_args=None):
     del side_list
     del sect_list
     del vert_list
+
+    ##### identify disconnected subgraphs and articulation points
+    ####sectors_visited = {}
+    ####sect_graphs = []
+    ####for si in range(n_sectors):
+    ####    if si not in sectors_visited:
+    ####        s_visited = graph_bfs(sect_graph, si)
+    ####        for myv in s_visited:
+    ####            sectors_visited[myv] = True
+    ####        sect_graphs.append((len(s_visited), s_visited))
+    ####sect_graphs = [n[1] for n in sorted(sect_graphs)]
+    ####for sg in sect_graphs:
+    ####    subgraph = {n:sect_graph[n] for n in sg}
+    ####    articulation_points = find_articulation_points(subgraph)
+    ####    print(len(subgraph), len(articulation_points))
+    ####    for ap in articulation_points:
+    ####        print(ap, subgraph[ap])
+    ####exit(1)
 
     reject_table = np.zeros((n_sectors, n_sectors), dtype='bool') + IS_INVISIBLE
 
