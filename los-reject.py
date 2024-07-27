@@ -90,7 +90,6 @@ def main(raw_args=None):
         for si in sg:
             if si not in added_to_sinds:
                 sorted_sector_inds.append(si)
-    sorted_sector_inds = sorted_sector_inds[::-1]
     print(f'finished graph construction ({int(time.perf_counter() - tt)} sec)')
 
     reject_table = np.zeros((n_sectors, n_sectors), dtype='bool') + IS_INVISIBLE
@@ -108,8 +107,8 @@ def main(raw_args=None):
         reject_table[sectors_i[1],sectors_i[0]] = IS_VISIBLE
 
     tt = time.perf_counter()
-    for i_si in range(n_sectors):
-        for i_sj in range(i_si+1, n_sectors):
+    for i_si in range(len(sorted_sector_inds)):
+        for i_sj in range(i_si+1, len(sorted_sector_inds)):
             si = sorted_sector_inds[i_si]
             sj = sorted_sector_inds[i_sj]
             if subgraph_by_sect[si] == subgraph_by_sect[sj]: # different subgraphs can never see each other
