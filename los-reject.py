@@ -6,7 +6,7 @@ import time
 from concurrent.futures import as_completed, ProcessPoolExecutor
 
 from source.graph_func import find_articulation_points, graph_bfs
-from source.los_func   import linedef_visibility, linedef_visibility_parallel
+from source.los_func   import linedef_visibility, linedef_visibility_parallel, sector_visibility_parallel
 from source.wad_func   import *
 
 
@@ -93,8 +93,8 @@ def main(raw_args=None):
     print(f'finished graph construction ({int(time.perf_counter() - tt)} sec)')
 
     reject_table = np.zeros((n_sectors, n_sectors), dtype='bool') + IS_INVISIBLE
-    known_to_be_blocked = np.zeros((n_sectors, n_sectors), dtype='bool')
-    linedef_vis = np.zeros((n_portals, n_portals), dtype='B')
+    known_blocked = np.zeros((n_sectors, n_sectors), dtype='bool')
+    linedef_rej = np.zeros((n_portals, n_portals), dtype='bool')
 
     # mark all sectors visible to themselves
     for i in range(n_sectors):
@@ -107,6 +107,33 @@ def main(raw_args=None):
         reject_table[sectors_i[1],sectors_i[0]] = IS_VISIBLE
 
     tt = time.perf_counter()
+    with ProcessPoolExecutor(max_workers=NUM_PROCESSES) as executor:
+        futures = {executor.submit(sector_visibility_parallel,
+                                   i_si,
+                                   sorted_sector_inds,
+                                   subgraph_by_sect,
+                                   portals_by_sect,
+                                   all_2s_lines,
+                                   all_solid_lines,
+                                   line_graph,
+                                   ap_dat_all,
+                                   reject_table,
+                                   known_blocked,
+                                   linedef_rej,
+                                   plot_prefix):i_si for i_si in range(len(sorted_sector_inds))}
+        for future in as_completed(futures):
+            (new_rej, new_known, new_linerej) = future.result()
+            i_si = futures.pop(future)
+            reject_table &= new_rej
+            known_blocked |= new_known
+            linedef_rej |= new_linerej
+            print(f'{i_si+1} / {len(sorted_sector_inds)} ({int(time.perf_counter() - tt)} sec)')
+
+    write_reject(reject_table, OUT_REJECT)
+    exit(1)
+
+    n_calls = 0
+    tt = time.perf_counter()
     for i_si in range(len(sorted_sector_inds)):
         for i_sj in range(i_si+1, len(sorted_sector_inds)):
             si = sorted_sector_inds[i_si]
@@ -115,52 +142,47 @@ def main(raw_args=None):
                 if reject_table[si,sj] == IS_VISIBLE:
                     # already known to be visible
                     continue
-                if known_to_be_blocked[si,sj]:
+                if known_blocked[si,sj]:
                     # already known to be blocked
                     continue
                 # pairwise los check of all 2s lines
-                sectors_can_see = False
+                sectors_can_see = []
                 print('--', i_si, i_sj, len(portals_by_sect[si]), len(portals_by_sect[sj]))
                 for li in portals_by_sect[si]:
                     for lj in portals_by_sect[sj]:
-                        if linedef_vis[li,lj] == 0:
+                        if not linedef_rej[li,lj]:
                             plot_fn = ''
                             if plot_prefix:
                                 plot_fn = f'{plot_prefix}.{si}.{sj}.{li}.{lj}.png'
-                            (vis_bool, vis_type) = linedef_visibility(all_2s_lines[li], all_2s_lines[lj], all_solid_lines, line_graph, reject_table, plot_fn)
+                            n_calls += 1
+                            (vis_bool, vis_type) = linedef_visibility(all_2s_lines[li], all_2s_lines[lj], all_solid_lines, line_graph, plot_fn)
                             if vis_bool is False:
-                                linedef_vis[li,lj] |= 2
-                                linedef_vis[lj,li] |= 2
+                                linedef_rej[li,lj] = True
+                                linedef_rej[lj,li] = True
                             else:
-                                sectors_can_see = True
-                                linedef_vis[li,lj] |= 4
-                                linedef_vis[lj,li] |= 4
-                        elif linedef_vis[li,lj] & 4:
-                            sectors_can_see = True
+                                sectors_can_see = [all_2s_lines[li][1], all_2s_lines[lj][1]]
                         if sectors_can_see:
                             break
                     if sectors_can_see:
                         break
                 # if we are visible, mark reject table
                 if sectors_can_see:
-                    reject_table[si,sj] = IS_VISIBLE
-                    reject_table[sj,si] = IS_VISIBLE
+                    for vsi in sectors_can_see[0]:
+                        for vsj in sectors_can_see[1]:
+                            reject_table[vsi,vsj] = IS_VISIBLE
+                            reject_table[vsj,vsi] = IS_VISIBLE
                 # otherwise, check articulation point info to see what other sectors we can now rule out as well
                 else:
-                    if si in ap_dat_all:
-                        for wing in ap_dat_all[si]:
-                            if sj not in wing:
-                                for sk in wing.keys():
-                                    known_to_be_blocked[sj,sk] = True
-                                    known_to_be_blocked[sk,sj] = True
-                    if sj in ap_dat_all:
-                        for wing in ap_dat_all[sj]:
-                            if si not in wing:
-                                for sk in wing.keys():
-                                    known_to_be_blocked[si,sk] = True
-                                    known_to_be_blocked[sk,si] = True
+                    for (s1,s2) in [(si,sj), (sj,si)]:
+                        if s1 in ap_dat_all:
+                            for wing in ap_dat_all[s1]:
+                                if s2 not in wing:
+                                    for sk in wing.keys():
+                                        known_blocked[s2,sk] = True
+                                        known_blocked[sk,s2] = True
         print(f'{i_si+1} / {n_sectors} ({int(time.perf_counter() - tt)} sec)')
     write_reject(reject_table, OUT_REJECT)
+    print(n_calls)
     exit(1)
 
     # pairwise compare all 2s lines
@@ -172,12 +194,29 @@ def main(raw_args=None):
                 plot_fn = ''
                 if plot_prefix:
                     plot_fn = f'{plot_prefix}.{li}.{lj}.png'
-                (vis_bool, vis_type) = linedef_visibility(all_2s_lines[li], all_2s_lines[lj], all_solid_lines, line_graph, reject_table, plot_fn)
+                # check if these sectors have already been analyzed and found visible
+                [line_i, sectors_i] = all_2s_lines[li]
+                [line_j, sectors_j] = all_2s_lines[lj]
+                already_visible = True
+                for si in sectors_i:
+                    for sj in sectors_j:
+                        if reject_table[si,sj] == IS_INVISIBLE:
+                            already_visible = False
+                if already_visible:
+                    continue
+                # visibility check
+                (vis_bool, vis_type) = linedef_visibility(all_2s_lines[li], all_2s_lines[lj], all_solid_lines, line_graph, plot_fn)
+                # if we are visible, mark reject table
                 if vis_bool:
-                    for si in all_2s_lines[li][1]:
-                        for sj in all_2s_lines[lj][1]:
+                    for si in sectors_i:
+                        for sj in sectors_j:
                             reject_table[si,sj] = IS_VISIBLE
                             reject_table[sj,si] = IS_VISIBLE
+                # otherwise, check articulation point info to see what other sectors we can now rule out as well
+                else:
+                    # but wait, we need to make sure all portal pairs between the sectors have been analyzed before doing this...
+                    pass
+                # count visibility types (for debugging purposes)
                 if vis_type not in vis_type_count:
                     vis_type_count[vis_type] = 0
                 vis_type_count[vis_type] += 1

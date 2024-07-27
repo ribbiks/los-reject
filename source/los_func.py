@@ -197,19 +197,9 @@ def get_span_of_polylines(line_collection_list, my_edge, other_edge, solid_lines
     return out_spans
 
 
-def linedef_visibility(linedat_i, linedat_j, all_solid_lines, line_graph, reject_table, plot_fn=''):
+def linedef_visibility(linedat_i, linedat_j, all_solid_lines, line_graph, plot_fn=''):
     [line_i, sectors_i] = linedat_i
     [line_j, sectors_j] = linedat_j
-    #
-    # check if these sectors have already been analyzed and found visible
-    #
-    already_visible = True
-    for si in sectors_i:
-        for sj in sectors_j:
-            if reject_table[si,sj] == IS_INVISIBLE:
-                already_visible = False
-    if already_visible:
-        return (False, 'already_vis')
     #
     # check for shared coordinates
     #
@@ -374,11 +364,21 @@ def linedef_visibility_parallel(all_2s_lines, li, n_portals, all_solid_lines, li
         plot_fn = ''
         if plot_prefix:
             plot_fn = f'{plot_prefix}.{li}.{lj}.png'
+        # check if these sectors have already been analyzed and found visible
+        [line_i, sectors_i] = all_2s_lines[li]
+        [line_j, sectors_j] = all_2s_lines[lj]
+        already_visible = True
+        for si in sectors_i:
+            for sj in sectors_j:
+                if reject_table[si,sj] == IS_INVISIBLE:
+                    already_visible = False
+        if already_visible:
+            continue
+        # visibility check
         (vis_bool, vis_type) = linedef_visibility(all_2s_lines[li],
                                                   all_2s_lines[lj],
                                                   all_solid_lines,
                                                   line_graph,
-                                                  reject_table,
                                                   plot_fn)
         if vis_bool:
             for si in all_2s_lines[li][1]:
@@ -388,3 +388,60 @@ def linedef_visibility_parallel(all_2s_lines, li, n_portals, all_solid_lines, li
                     reject_out[si,sj] = IS_VISIBLE
                     reject_out[sj,si] = IS_VISIBLE
     return reject_out
+
+
+def sector_visibility_parallel(i_si, sorted_sector_inds, subgraph_by_sect, portals_by_sect, all_2s_lines, all_solid_lines, line_graph, ap_dat_all, reject_table, known_blocked, linedef_rej, plot_prefix):
+    reject_out = np.zeros((reject_table.shape[0], reject_table.shape[1]), dtype='bool') + IS_INVISIBLE
+    known_out = np.zeros((known_blocked.shape[0], known_blocked.shape[1]), dtype='bool')
+    linerej_out = np.zeros((linedef_rej.shape[0], linedef_rej.shape[1]), dtype='bool')
+    for i_sj in range(i_si+1, len(sorted_sector_inds)):
+        si = sorted_sector_inds[i_si]
+        sj = sorted_sector_inds[i_sj]
+        if subgraph_by_sect[si] == subgraph_by_sect[sj]: # different subgraphs can never see each other
+            if reject_table[si,sj] == IS_VISIBLE:
+                # already known to be visible
+                continue
+            if known_blocked[si,sj]:
+                # already known to be blocked
+                continue
+            # pairwise los check of all 2s lines
+            sectors_can_see = []
+            #print('--', i_si, i_sj, len(portals_by_sect[si]), len(portals_by_sect[sj]))
+            for li in portals_by_sect[si]:
+                for lj in portals_by_sect[sj]:
+                    if not linedef_rej[li,lj]:
+                        plot_fn = ''
+                        if plot_prefix:
+                            plot_fn = f'{plot_prefix}.{si}.{sj}.{li}.{lj}.png'
+                        (vis_bool, vis_type) = linedef_visibility(all_2s_lines[li], all_2s_lines[lj], all_solid_lines, line_graph, plot_fn)
+                        if vis_bool is False:
+                            linedef_rej[li,lj] = True
+                            linedef_rej[lj,li] = True
+                            linerej_out[li,lj] = True
+                            linerej_out[lj,li] = True
+                        else:
+                            sectors_can_see = [all_2s_lines[li][1], all_2s_lines[lj][1]]
+                    if sectors_can_see:
+                        break
+                if sectors_can_see:
+                    break
+            # if we are visible, mark reject table
+            if sectors_can_see:
+                for vsi in sectors_can_see[0]:
+                    for vsj in sectors_can_see[1]:
+                        reject_table[vsi,vsj] = IS_VISIBLE
+                        reject_table[vsj,vsi] = IS_VISIBLE
+                        reject_out[vsi,vsj] = IS_VISIBLE
+                        reject_out[vsj,vsi] = IS_VISIBLE
+            # otherwise, check articulation point info to see what other sectors we can now rule out as well
+            else:
+                for (s1,s2) in [(si,sj), (sj,si)]:
+                    if s1 in ap_dat_all:
+                        for wing in ap_dat_all[s1]:
+                            if s2 not in wing:
+                                for sk in wing.keys():
+                                    known_blocked[s2,sk] = True
+                                    known_blocked[sk,s2] = True
+                                    known_out[s2,sk] = True
+                                    known_out[sk,s2] = True
+    return (reject_out, known_out, linerej_out)
