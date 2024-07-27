@@ -1,7 +1,7 @@
 from collections import deque
 
 
-def graph_bfs(graph, starting_node, node_whitelist=None):
+def graph_bfs(graph, starting_node, node_whitelist=None, node_blacklist=None):
     queue = deque([starting_node])
     visited = {}
     while queue:
@@ -10,20 +10,20 @@ def graph_bfs(graph, starting_node, node_whitelist=None):
             continue
         visited[node] = True
         for neighbor in graph[node]:
-            if (node_whitelist is None or neighbor in node_whitelist) and neighbor not in visited:
+            if (node_whitelist is None or neighbor in node_whitelist) and (node_blacklist is None or neighbor not in node_blacklist) and neighbor not in visited:
                 queue.append(neighbor)
     return sorted(visited.keys())
 
 
 def find_articulation_points(graph):
     timer = 0
-    disc = [-1] * len(graph)
-    low = [-1] * len(graph)
-    parent = [-1] * len(graph)
-    ap = [False] * len(graph)
+    disc = {n:-1 for n in graph.keys()}
+    low = {n:-1 for n in graph.keys()}
+    parent = {n:-1 for n in graph.keys()}
+    ap = {n:False for n in graph.keys()}
     stack = []
     #
-    for i in range(len(graph)):
+    for i in graph.keys():
         if disc[i] == -1:
             stack.append((i, 0))  # (node, child_count)
             while stack:
@@ -57,4 +57,4 @@ def find_articulation_points(graph):
                     children = sum(1 for v in graph[u] if parent[v] == u)
                     if parent[u] == -1 and children > 1:
                         ap[u] = True
-    return [i for i in range(len(graph)) if ap[i]]
+    return [i for i in graph.keys() if ap[i]]

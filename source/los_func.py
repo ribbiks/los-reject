@@ -299,7 +299,7 @@ def linedef_visibility(linedat_i, linedat_j, all_solid_lines, line_graph, reject
     lines_1s_iso = []
     for sli in solid_lines_of_interest.keys():
         if sli not in lines_visited:
-            l_visited = graph_bfs(line_graph, sli, solid_lines_of_interest)
+            l_visited = graph_bfs(line_graph, sli, node_whitelist=solid_lines_of_interest)
             (hit_e1, hit_e2) = (False, False)
             for myv in l_visited:
                 lines_visited[myv] = True
