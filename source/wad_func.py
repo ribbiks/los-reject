@@ -1,7 +1,8 @@
 import numpy as np
+from collections import defaultdict
 from struct import unpack
 
-from collections import defaultdict
+from source.geometry import LineSegment
 
 IS_VISIBLE = 0
 IS_INVISIBLE = 1
@@ -133,22 +134,21 @@ def process_map_data(line_list, side_list, vert_list):
     portals_by_sect = defaultdict(list)
     for li,line in enumerate(line_list):
         (start_vertex, end_vertex, line_flags, line_special, line_tag, sidedef_front, sidedef_back) = line
-        vert1 = vert_list[start_vertex]
-        vert2 = vert_list[end_vertex]
+        vert1 = tuple(vert_list[start_vertex])
+        vert2 = tuple(vert_list[end_vertex])
         my_sectors = []
         if sidedef_front != 0xffff:
             my_sectors.append(side_list[sidedef_front][5])
         if sidedef_back != 0xffff:
             my_sectors.append(side_list[sidedef_back][5])
         if len(my_sectors) == 1:
-            all_solid_lines.append([np.array(vert1), np.array(vert2)])
-            (v1, v2) = (tuple(vert1), tuple(vert2))
+            all_solid_lines.append(LineSegment(vert1, vert2))
             solid_ind = len(all_solid_lines) - 1
-            line_ind_by_vert[v1].append(solid_ind)
-            line_ind_by_vert[v2].append(solid_ind)
+            line_ind_by_vert[vert1].append(solid_ind)
+            line_ind_by_vert[vert2].append(solid_ind)
             line_graph[solid_ind] = []
         elif len(my_sectors) == 2 and my_sectors[0] != my_sectors[1]:
-            all_2s_lines.append([[np.array(vert1), np.array(vert2)], my_sectors])
+            all_2s_lines.append(LineSegment(vert1, vert2, metadata=my_sectors))
             portals_by_sect[my_sectors[0]].append(len(all_2s_lines) - 1)
             portals_by_sect[my_sectors[1]].append(len(all_2s_lines) - 1)
             for si in [(0,1), (1,0)]:

@@ -58,3 +58,46 @@ def find_articulation_points(graph):
                     if parent[u] == -1 and children > 1:
                         ap[u] = True
     return [i for i in graph.keys() if ap[i]]
+
+
+def process_sector_graph(sect_graph):
+    sectors_visited = {}
+    sect_graphs = []
+    for si in sect_graph.keys():
+        if si not in sectors_visited:
+            s_visited = graph_bfs(sect_graph, si)
+            for myv in s_visited:
+                sectors_visited[myv] = True
+            sect_graphs.append((len(s_visited), s_visited))
+    sect_graphs = [n[1] for n in sorted(sect_graphs)]
+    #
+    subgraph_by_sect = {}
+    articulation_dat = {}
+    sorted_sector_inds = []
+    for sgi,sg in enumerate(sect_graphs):
+        for si in sg:
+            subgraph_by_sect[si] = sgi
+        subgraph = {n:sect_graph[n] for n in sg}
+        articulation_points = find_articulation_points(subgraph)
+        ap_dat = []
+        for ap in articulation_points:
+            sectors_visited = {} # reusing this variable
+            my_wings = []
+            for si in subgraph[ap]:
+                if si not in sectors_visited:
+                    s_visited = graph_bfs(sect_graph, si, node_blacklist={ap:True})
+                    for myv in s_visited:
+                        sectors_visited[myv] = True
+                    my_wings.append(s_visited)
+            ap_dat.append((len(subgraph[ap]), ap, my_wings))
+        ap_dat = sorted(ap_dat, reverse=True)
+        added_to_sinds = {}
+        for apd in ap_dat:
+            articulation_dat[apd[1]] = [{n:True for n in slist} for slist in apd[2]]
+            sorted_sector_inds.append(apd[1])
+            added_to_sinds[apd[1]] = True
+        for si in sg:
+            if si not in added_to_sinds:
+                sorted_sector_inds.append(si)
+    #
+    return (subgraph_by_sect, articulation_dat, sorted_sector_inds)
