@@ -6,7 +6,7 @@ from concurrent.futures import as_completed, ProcessPoolExecutor
 
 from source.bitarray2d import BitArray2D
 from source.graph_func import process_sector_graph
-from source.los_func   import sector_visibility_parallel
+from source.los_func   import linedef_visibility, sector_visibility_parallel
 from source.quadtree   import get_quadtree
 from source.wad_func   import *
 
@@ -52,7 +52,8 @@ def main(raw_args=None):
 
     # identify disconnected subgraphs and articulation points
     tt = time.perf_counter()
-    (subgraph_by_sect, articulation_dat, sorted_sector_inds) = process_sector_graph(sect_graph)
+    (subgraph_by_sect, articulation_dat, articulation_sinds, normal_sinds) = process_sector_graph(sect_graph)
+    all_sinds = articulation_sinds + normal_sinds
     print(f'finished graph construction ({int(time.perf_counter() - tt)} sec)')
 
     reject_table = BitArray2D(n_sectors, init_val=IS_INVISIBLE)
@@ -69,11 +70,12 @@ def main(raw_args=None):
         reject_table[sectors_i[0],sectors_i[1]] = IS_VISIBLE
         reject_table[sectors_i[1],sectors_i[0]] = IS_VISIBLE
 
+    # process articulation sectors in parallel
     tt = time.perf_counter()
     with ProcessPoolExecutor(max_workers=NUM_PROCESSES) as executor:
         futures = {executor.submit(sector_visibility_parallel,
-                                   i_si,
-                                   sorted_sector_inds,
+                                   articulation_sinds[i_si],
+                                   all_sinds,
                                    subgraph_by_sect,
                                    portals_by_sect,
                                    all_2s_lines,
@@ -83,14 +85,63 @@ def main(raw_args=None):
                                    reject_table,
                                    known_blocked,
                                    linedef_rej,
-                                   plot_prefix):i_si for i_si in range(len(sorted_sector_inds))}
+                                   plot_prefix):i_si for i_si in range(len(articulation_sinds))}
         for future in as_completed(futures):
             (new_rej, new_known, new_linerej) = future.result()
             i_si = futures.pop(future)
             reject_table &= new_rej
             known_blocked |= new_known
             linedef_rej |= new_linerej
-            print(f'{i_si+1} / {len(sorted_sector_inds)} ({int(time.perf_counter() - tt)} sec)')
+            print(f'articulation sector {i_si+1} / {len(articulation_sinds)} ({int(time.perf_counter() - tt)} sec)')
+
+    # process the rest of the sectors serially
+    for i_si in range(len(normal_sinds)):
+        for i_sj in range(len(all_sinds)):
+            si = normal_sinds[i_si]
+            sj = all_sinds[i_sj]
+            if subgraph_by_sect[si] == subgraph_by_sect[sj]: # different subgraphs can never see each other
+                if reject_table[si,sj] == IS_VISIBLE:
+                    # already known to be visible
+                    continue
+                if known_blocked[si,sj]:
+                    # already known to be blocked
+                    continue
+                # pairwise los check of all 2s lines
+                sectors_can_see = []
+                for li in portals_by_sect[si]:
+                    for lj in portals_by_sect[sj]:
+                        if not linedef_rej[li,lj]:
+                            plot_fn = ''
+                            if plot_prefix:
+                                plot_fn = f'{plot_prefix}.{si}.{sj}.{li}.{lj}.png'
+                            (vis_bool, vis_type) = linedef_visibility(all_2s_lines[li], all_2s_lines[lj], solid_lines_quadtree, line_graph, plot_fn)
+                            if vis_bool is False:
+                                linedef_rej[li,lj] = True
+                                linedef_rej[lj,li] = True
+                            else:
+                                sectors_can_see = [all_2s_lines[li].metadata, all_2s_lines[lj].metadata]
+                        if sectors_can_see:
+                            break
+                    if sectors_can_see:
+                        break
+                # if we are visible, mark reject table
+                if sectors_can_see:
+                    for vsi in sectors_can_see[0]:
+                        for vsj in sectors_can_see[1]:
+                            reject_table[vsi,vsj] = IS_VISIBLE
+                            reject_table[vsj,vsi] = IS_VISIBLE
+                # otherwise, check articulation point info to see what other sectors we can now rule out as well
+                else:
+                    known_blocked[si,sj] = True
+                    known_blocked[sj,si] = True
+                    for (s1,s2) in [(si,sj), (sj,si)]:
+                        if s1 in articulation_dat:
+                            for wing in articulation_dat[s1]:
+                                if s2 not in wing:
+                                    for sk in wing.keys():
+                                        known_blocked[s2,sk] = True
+                                        known_blocked[sk,s2] = True
+        print(f'normal sector {i_si+1} / {len(normal_sinds)} ({int(time.perf_counter() - tt)} sec)')
 
     write_reject(reject_table.get_2d_array(), OUT_REJECT)
 

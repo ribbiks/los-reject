@@ -73,7 +73,8 @@ def process_sector_graph(sect_graph):
     #
     subgraph_by_sect = {}
     articulation_dat = {}
-    sorted_sector_inds = []
+    articulation_sinds = []
+    normal_sinds = []
     for sgi,sg in enumerate(sect_graphs):
         for si in sg:
             subgraph_by_sect[si] = sgi
@@ -94,10 +95,10 @@ def process_sector_graph(sect_graph):
         added_to_sinds = {}
         for apd in ap_dat:
             articulation_dat[apd[1]] = [{n:True for n in slist} for slist in apd[2]]
-            sorted_sector_inds.append(apd[1])
+            articulation_sinds.append(apd[1])
             added_to_sinds[apd[1]] = True
         for si in sg:
             if si not in added_to_sinds:
-                sorted_sector_inds.append(si)
+                normal_sinds.append(si)
     #
-    return (subgraph_by_sect, articulation_dat, sorted_sector_inds)
+    return (subgraph_by_sect, articulation_dat, articulation_sinds, normal_sinds)

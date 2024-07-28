@@ -333,42 +333,9 @@ def linedef_visibility(line_i, line_j, solid_lines_quadtree, line_graph, plot_fn
     return (True, 'possibly_vis')
 
 
-def linedef_visibility_parallel(all_2s_lines, li, n_portals, all_solid_lines, line_graph, reject_table, plot_prefix):
-    reject_out = np.zeros((reject_table.shape[0], reject_table.shape[1]), dtype='bool') + IS_INVISIBLE
-    for lj in range(li+1, n_portals):
-        plot_fn = ''
-        if plot_prefix:
-            plot_fn = f'{plot_prefix}.{li}.{lj}.png'
-        # check if these sectors have already been analyzed and found visible
-        [line_i, sectors_i] = all_2s_lines[li]
-        [line_j, sectors_j] = all_2s_lines[lj]
-        already_visible = True
-        for si in sectors_i:
-            for sj in sectors_j:
-                if reject_table[si,sj] == IS_INVISIBLE:
-                    already_visible = False
-        if already_visible:
-            continue
-        # visibility check
-        (vis_bool, vis_type) = linedef_visibility(all_2s_lines[li],
-                                                  all_2s_lines[lj],
-                                                  all_solid_lines,
-                                                  line_graph,
-                                                  plot_fn)
-        if vis_bool:
-            for si in all_2s_lines[li][1]:
-                for sj in all_2s_lines[lj][1]:
-                    reject_table[si,sj] = IS_VISIBLE
-                    reject_table[sj,si] = IS_VISIBLE
-                    reject_out[si,sj] = IS_VISIBLE
-                    reject_out[sj,si] = IS_VISIBLE
-    return reject_out
-
-
-def sector_visibility_parallel(i_si, sorted_sector_inds, subgraph_by_sect, portals_by_sect, all_2s_lines, solid_lines_quadtree, line_graph, articulation_dat, reject_table, known_blocked, linedef_rej, plot_prefix):
-    for i_sj in range(i_si+1, len(sorted_sector_inds)):
-        si = sorted_sector_inds[i_si]
-        sj = sorted_sector_inds[i_sj]
+def sector_visibility_parallel(si, all_sinds, subgraph_by_sect, portals_by_sect, all_2s_lines, solid_lines_quadtree, line_graph, articulation_dat, reject_table, known_blocked, linedef_rej, plot_prefix):
+    for i_sj in range(len(all_sinds)):
+        sj = all_sinds[i_sj]
         if subgraph_by_sect[si] == subgraph_by_sect[sj]: # different subgraphs can never see each other
             if reject_table[si,sj] == IS_VISIBLE:
                 # already known to be visible
@@ -402,6 +369,8 @@ def sector_visibility_parallel(i_si, sorted_sector_inds, subgraph_by_sect, porta
                         reject_table[vsj,vsi] = IS_VISIBLE
             # otherwise, check articulation point info to see what other sectors we can now rule out as well
             else:
+                known_blocked[si,sj] = True
+                known_blocked[sj,si] = True
                 for (s1,s2) in [(si,sj), (sj,si)]:
                     if s1 in articulation_dat:
                         for wing in articulation_dat[s1]:
