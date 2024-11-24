@@ -1,12 +1,11 @@
 import matplotlib.pyplot as mpl
 import numpy as np
-import time
 
-from source.geometry   import LineSegment
+from source.geometry   import LineSegment, Point
 from source.graph_func import graph_bfs
-from source.wad_func   import IS_INVISIBLE, IS_VISIBLE
+from source.wad_func   import IS_VISIBLE
 
-EPSILON = 0.1
+EPSILON = 1e-4
 MAX_PAIRWISE_DIST = 16000
 
 
@@ -72,6 +71,60 @@ def distance_from_point_to_line_segment(point, line):
     num = abs(v[1]*point[0] - v[0]*point[1] + line[1][0]*line[0][1] - line[1][1]*line[0][0])
     den = np.sqrt(v[0]*v[0] + v[1]*v[1])
     return num/den
+
+
+def intersect_line_with_line_segment(p, d, p1, p2):
+    # line defined by point p and direction d
+    # line segment defined by points p1 and p2
+    v = p2 - p1
+    cross = d.cross(v)
+    if abs(cross) < EPSILON:
+        # Lines are parallel, no intersection
+        return (None, None)
+    t = (p1 - p).cross(v) / cross
+    intersection = p + d * t
+    k = (intersection - p1).dot(v) / v.dot(v)
+    return (intersection, k)
+
+
+def intersect_line_with_line_segment_old(p, d, p1, p2):
+    # line defined by point p and direction d
+    # line segment defined by points p1 and p2
+    Ainv = np.linalg.inv([[d[0], p1[0] - p2[0]],
+                          [d[1], p1[1] - p2[1]]])
+    tk = np.dot(Ainv, [[p1[0] - p[0]],
+                       [p1[1] - p[1]]])
+    return (p + tk[0,0] * d, tk[1,0])
+
+
+def shortest_line_from_point_to_segment(point, segment):
+    AP = point - segment[0]
+    AB = segment[1] - segment[0]
+    projection = AP.dot(AB) / AB.dot(AB)
+    if projection <= 0:
+        closest = segment[0]
+    elif projection >= 1:
+        closest = segment[1]
+    else:
+        closest = segment.start + AB * projection
+    return LineSegment(point, closest)
+
+
+def align_segment_with_x_axis(segment_to_align, segment_to_rotate):
+    # rotate coordinates so that segment_to_align aligns with the x-axis.
+    # returns the rotated version of both segments.
+    translated_align_end = segment_to_align[1] - segment_to_align[0]
+    translated_rotate_start = segment_to_rotate[0] - segment_to_align[0]
+    translated_rotate_end = segment_to_rotate[1] - segment_to_align[0]
+    #
+    angle = -segment_to_align.angle_with_x_axis()
+    rotated_align_end = translated_align_end.rotate(angle)
+    rotated_rotate_start = translated_rotate_start.rotate(angle)
+    rotated_rotate_end = translated_rotate_end.rotate(angle)
+    #
+    new_aligned_segment = LineSegment(Point(0, 0), rotated_align_end)
+    new_rotated_segment = LineSegment(rotated_rotate_start, rotated_rotate_end)
+    return (new_aligned_segment, new_rotated_segment)
 
 
 def plot_line(line, kwargs={}, normal_kwargs={}, normal_len_frac=0.1):
@@ -159,10 +212,10 @@ def get_span_of_polylines(point_list, my_edge, other_edge, both_edges=False):
                     closest_point_2 = (d_frac_2, point)
     if closest_point is not None:
         if both_edges is False:
-            out_spans.append([my_edge[0], closest_point[1]])
-            out_spans.append([my_edge[1], closest_point[1]])
+            out_spans.append(LineSegment(my_edge[0], closest_point[1]))
+            out_spans.append(LineSegment(my_edge[1], closest_point[1]))
         elif closest_point_2 is not None:
-            out_spans.append([closest_point[1], closest_point_2[1]])
+            out_spans.append(LineSegment(closest_point[1], closest_point_2[1]))
     return out_spans
 
 
@@ -195,10 +248,10 @@ def linedef_visibility(line_i, line_j, solid_lines_quadtree, line_graph, plot_fn
     #
     # get all 1s lines that might be within our sight area
     #
-    x_min = min(l_src[0].x, l_src[1].x, l_tgt[0].x, l_tgt[1].x)
-    x_max = max(l_src[0].x, l_src[1].x, l_tgt[0].x, l_tgt[1].x)
-    y_min = min(l_src[0].y, l_src[1].y, l_tgt[0].y, l_tgt[1].y)
-    y_max = max(l_src[0].y, l_src[1].y, l_tgt[0].y, l_tgt[1].y)
+    x_min = min(l_src[0].x, l_src[1].x, l_tgt[0].x, l_tgt[1].x) - 1
+    x_max = max(l_src[0].x, l_src[1].x, l_tgt[0].x, l_tgt[1].x) + 1
+    y_min = min(l_src[0].y, l_src[1].y, l_tgt[0].y, l_tgt[1].y) - 1
+    y_max = max(l_src[0].y, l_src[1].y, l_tgt[0].y, l_tgt[1].y) + 1
     solid_line_candidates = solid_lines_quadtree.query_bl_tr((x_min, y_min), (x_max, y_max))
     if len(solid_line_candidates) == 0:
         return (True, 'no_1s_lines')
@@ -304,6 +357,22 @@ def linedef_visibility(line_i, line_j, solid_lines_quadtree, line_graph, plot_fn
                 break
         if have_s1_int and have_s2_int:
             return (False, 'span_intersect_iso')
+    #####
+    ##### check if all spanlines collectively block sight
+    #####
+    ####portals_e1 = []
+    ####portals_e2 = []
+    ####portals_iso = []
+    ####l_tgt_flip = LineSegment(l_tgt[1], l_tgt[0])
+    ####for span_i in range(0,len(spanlines_e1),2):
+    ####    blockpoint = spanlines_e1[span_i][1]
+    ####    portals_e1.append(shortest_line_from_point_to_segment(blockpoint, edge2))
+    ####for span_i in range(0,len(spanlines_e2),2):
+    ####    blockpoint = spanlines_e2[span_i][1]
+    ####    portals_e2.append(shortest_line_from_point_to_segment(blockpoint, edge1))
+    ####for span_i in range(len(spanlines_iso)):
+    ####    portals_iso.append(shortest_line_from_point_to_segment(spanlines_iso[span_i][0], edge2))
+    ####    portals_iso.append(shortest_line_from_point_to_segment(spanlines_iso[span_i][1], edge1))
     #
     # plotting
     #
@@ -316,14 +385,14 @@ def linedef_visibility(line_i, line_j, solid_lines_quadtree, line_graph, plot_fn
                 plot_line(sline, {'linewidth':0.5, 'color':'k', 'linestyle':'--'})
         plot_line(l_src, {'linewidth':2, 'color':'g', 'linestyle':'-'}, {'linewidth':1, 'color':'g', 'linestyle':'--'})
         plot_line(l_tgt, {'linewidth':2, 'color':'b', 'linestyle':'-'}, {'linewidth':1, 'color':'b', 'linestyle':'--'})
-        plot_line(edge1, {'linewidth':1, 'color':'r', 'linestyle':'--'})
+        plot_line(edge1, {'linewidth':1, 'color':'m', 'linestyle':'--'})
         plot_line(edge2, {'linewidth':1, 'color':'r', 'linestyle':'--'})
-        for spanline in spanlines_e1:
-            plot_line(spanline, {'linewidth':1, 'color':'r', 'linestyle':'-'})
-        for spanline in spanlines_e2:
-            plot_line(spanline, {'linewidth':1, 'color':'r', 'linestyle':'-'})
-        for spanline in spanlines_iso:
-            plot_line(spanline, {'linewidth':1, 'color':'r', 'linestyle':'-'})
+        #for portal in portals_e1:
+        #    plot_line(portal, {'linewidth':1, 'color':'m', 'linestyle':'-'})
+        #for portal in portals_e2:
+        #    plot_line(portal, {'linewidth':1, 'color':'r', 'linestyle':'-'})
+        #for portal in portals_iso:
+        #    plot_line(portal, {'linewidth':1, 'color':'c', 'linestyle':'-'})
         mpl.axis('scaled')
         mpl.savefig(plot_fn)
         mpl.close(fig)

@@ -1,3 +1,5 @@
+import math
+
 
 class Point:
     def __init__(self, x, y):
@@ -62,6 +64,23 @@ class Point:
         yield self.x
         yield self.y
 
+    def dot(self, other):
+        return self.x * other.x + self.y * other.y
+
+    def cross(self, other):
+        return self.x * other.y - self.y * other.x
+
+    def magnitude(self):
+        return math.sqrt(self.x**2 + self.y**2)
+
+    def rotate(self, angle):
+        # rotate the point by the given angle (in radians)
+        cos_theta = math.cos(angle)
+        sin_theta = math.sin(angle)
+        x = self.x * cos_theta - self.y * sin_theta
+        y = self.x * sin_theta + self.y * cos_theta
+        return Point(x, y)
+
 
 class LineSegment:
     def __init__(self, start, end, metadata=None):
@@ -85,12 +104,26 @@ class LineSegment:
         else:
             raise IndexError("LineSegment index out of range")
 
+    def __str__(self):
+        return f"LineSegment({self.start}, {self.end})"
+
+    def __repr__(self):
+        return self.__str__()
+
     def __iter__(self):
         yield self.start
         yield self.end
 
     def flip(self):
         self.start, self.end = self.end, self.start
+
+    def angle_with_x_axis(self):
+        dx = self.end.x - self.start.x
+        dy = self.end.y - self.start.y
+        return math.atan2(dy, dx)
+
+    def length(self):
+        return (self.end - self.start).magnitude()
 
 
 class BoundingBox:

@@ -15,14 +15,16 @@ def main(raw_args=None):
     parser = argparse.ArgumentParser(description='los-reject', formatter_class=argparse.ArgumentDefaultsHelpFormatter,)
     parser.add_argument('-i', type=str, required=True,  metavar='input.wad',  help="* Input WAD")
     parser.add_argument('-m', type=str, required=True,  metavar='MAP01',      help="* Map name")
-    parser.add_argument('-r', type=str, required=True,  metavar='REJECT.lmp', help="* Output reject table lmp")
-    parser.add_argument('-p', type=int, required=False, metavar='4',          help="Number of processes to use", default=4)
-    parser.add_argument('--plot',       required=False, action='store_true',  help="Plotting! (for debugging)", default=False)
+    parser.add_argument('-o', type=str, required=True,  metavar='REJECT.lmp', help="* Output reject table lmp")
+    parser.add_argument('-r', type=str, required=False, metavar='INPUT.lmp',  help='Use this reject table as a base', default='')
+    parser.add_argument('-p', type=int, required=False, metavar='4',          help="Number of processes to use",      default=4)
+    parser.add_argument('--plot',       required=False, action='store_true',  help="Plotting! (for debugging)",       default=False)
     args = parser.parse_args()
     #
     IN_WAD = args.i
     WHICH_MAP = args.m
-    OUT_REJECT = args.r
+    OUT_REJECT = args.o
+    IN_REJECT = args.r
     NUM_PROCESSES = args.p
     PLOTTING = args.plot
 
@@ -60,6 +62,28 @@ def main(raw_args=None):
     known_blocked = BitArray2D(n_sectors)
     linedef_rej = BitArray2D(n_portals)
 
+    # read in input reject lump (if specified)
+    if IN_REJECT:
+        tt = time.perf_counter()
+        base_reject = read_reject(IN_REJECT)
+        if base_reject.shape[0] != n_sectors:
+            print('Error: input reject map (-r) has invalid dimensions')
+            exit(1)
+        # if the input reject table says two sectors can't see each other:
+        # - none of their portals can see each other
+        # - sectors should be added to known_blocked
+        for i_si in range(len(all_sinds)):
+            print(i_si)
+            for i_sj in range(i_si + 1, len(all_sinds)):
+                si = all_sinds[i_si]
+                sj = all_sinds[i_sj]
+                if base_reject[si,sj] == IS_INVISIBLE:
+                    for li in portals_by_sect[si]:
+                        for lj in portals_by_sect[sj]:
+                            linedef_rej[li,lj] = linedef_rej[lj,li] = True
+                    known_blocked[si,sj] = known_blocked[sj,si] = True
+        print(f'finished processing input reject ({int(time.perf_counter() - tt)} sec)')
+
     # mark all sectors visible to themselves
     for i in range(n_sectors):
         reject_table[i,i] = IS_VISIBLE
@@ -72,27 +96,30 @@ def main(raw_args=None):
 
     # process articulation sectors in parallel
     tt = time.perf_counter()
-    with ProcessPoolExecutor(max_workers=NUM_PROCESSES) as executor:
-        futures = {executor.submit(sector_visibility_parallel,
-                                   articulation_sinds[i_si],
-                                   all_sinds,
-                                   subgraph_by_sect,
-                                   portals_by_sect,
-                                   all_2s_lines,
-                                   solid_lines_quadtree,
-                                   line_graph,
-                                   articulation_dat,
-                                   reject_table,
-                                   known_blocked,
-                                   linedef_rej,
-                                   plot_prefix):i_si for i_si in range(len(articulation_sinds))}
-        for future in as_completed(futures):
-            (new_rej, new_known, new_linerej) = future.result()
-            i_si = futures.pop(future)
-            reject_table &= new_rej
-            known_blocked |= new_known
-            linedef_rej |= new_linerej
-            print(f'articulation sector {i_si+1} / {len(articulation_sinds)} ({int(time.perf_counter() - tt)} sec)')
+    if NUM_PROCESSES > 1:
+        with ProcessPoolExecutor(max_workers=NUM_PROCESSES) as executor:
+            futures = {executor.submit(sector_visibility_parallel,
+                                       articulation_sinds[i_si],
+                                       all_sinds,
+                                       subgraph_by_sect,
+                                       portals_by_sect,
+                                       all_2s_lines,
+                                       solid_lines_quadtree,
+                                       line_graph,
+                                       articulation_dat,
+                                       reject_table,
+                                       known_blocked,
+                                       linedef_rej,
+                                       plot_prefix):i_si for i_si in range(len(articulation_sinds))}
+            for future in as_completed(futures):
+                (new_rej, new_known, new_linerej) = future.result()
+                i_si = futures.pop(future)
+                reject_table &= new_rej
+                known_blocked |= new_known
+                linedef_rej |= new_linerej
+                print(f'articulation sector {i_si+1} / {len(articulation_sinds)} ({int(time.perf_counter() - tt)} sec)')
+    else:
+        normal_sinds = articulation_sinds + normal_sinds
 
     # process the rest of the sectors serially
     for i_si in range(len(normal_sinds)):
@@ -116,8 +143,7 @@ def main(raw_args=None):
                                 plot_fn = f'{plot_prefix}.{si}.{sj}.{li}.{lj}.png'
                             (vis_bool, vis_type) = linedef_visibility(all_2s_lines[li], all_2s_lines[lj], solid_lines_quadtree, line_graph, plot_fn)
                             if vis_bool is False:
-                                linedef_rej[li,lj] = True
-                                linedef_rej[lj,li] = True
+                                linedef_rej[li,lj] = linedef_rej[lj,li] = True
                             else:
                                 sectors_can_see = [all_2s_lines[li].metadata, all_2s_lines[lj].metadata]
                         if sectors_can_see:
@@ -128,20 +154,17 @@ def main(raw_args=None):
                 if sectors_can_see:
                     for vsi in sectors_can_see[0]:
                         for vsj in sectors_can_see[1]:
-                            reject_table[vsi,vsj] = IS_VISIBLE
-                            reject_table[vsj,vsi] = IS_VISIBLE
+                            reject_table[vsi,vsj] = reject_table[vsj,vsi] = IS_VISIBLE
                 # otherwise, check articulation point info to see what other sectors we can now rule out as well
                 else:
-                    known_blocked[si,sj] = True
-                    known_blocked[sj,si] = True
+                    known_blocked[si,sj] = known_blocked[sj,si] = True
                     for (s1,s2) in [(si,sj), (sj,si)]:
                         if s1 in articulation_dat:
                             for wing in articulation_dat[s1]:
                                 if s2 not in wing:
                                     for sk in wing.keys():
-                                        known_blocked[s2,sk] = True
-                                        known_blocked[sk,s2] = True
-        print(f'normal sector {i_si+1} / {len(normal_sinds)} ({int(time.perf_counter() - tt)} sec)')
+                                        known_blocked[s2,sk] = known_blocked[sk,s2] = True
+        print('articulation '*(NUM_PROCESSES <= 1 and i_si < len(articulation_sinds)) + f'sector {i_si+1} / {len(normal_sinds)} ({int(time.perf_counter() - tt)} sec)')
 
     write_reject(reject_table.get_2d_array(), OUT_REJECT)
 
